@@ -1,12 +1,12 @@
 """
-File Chunker - Version 1.1
+File Chunker - Version 1.3.0
 Modern GUI file splitter using pure default CustomTkinter styling
-Supports size-based and number-of-parts splitting
-Last updated: January 2025 / 2026
+Appearance mode switcher (Light / Dark / System) + persistence
+Last updated: January 2026
 """
 
-# Standard library
 import os
+import json
 import queue
 import threading
 from pathlib import Path
@@ -15,15 +15,35 @@ from enum import Enum
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 
-# GUI & dialogs
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 
-# PDF support
 import PyPDF2
 
 
-# ========================== CORE LOGIC ==========================
+# ========================== CONFIG & PERSISTENCE ==========================
+
+CONFIG_FILE = Path.home() / ".file_chunker_config.json"
+
+def load_config():
+    default = {"appearance_mode": "System"}
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return default
+
+def save_config(data):
+    try:
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except:
+        pass
+
+
+# ========================== CORE LOGIC (unchanged from 1.1) ==========================
 
 class SizeUnit(Enum):
     MB = 1024 * 1024
@@ -167,11 +187,10 @@ def get_chunker_for_file(file_path: Path, config: ChunkConfig) -> FileChunker:
 
 
 def estimate_chunks(input_path: Path, config: ChunkConfig) -> Tuple[int, str]:
-    """Quick preview of how many chunks will be created"""
     total_size = input_path.stat().st_size
 
     if config.number_of_chunks is not None:
-        return config.number_of_chunks, f"{config.number_of_chunks} parts (requested)"
+        return config.number_of_chunks, f"{config.number_of_chunks} parts"
     else:
         bytes_per = config.bytes_per_chunk
         estimated = (total_size + bytes_per - 1) // bytes_per
@@ -179,20 +198,21 @@ def estimate_chunks(input_path: Path, config: ChunkConfig) -> Tuple[int, str]:
         return estimated, size_str
 
 
-# ========================== GUI ==========================
+# ========================== GUI v1.3.0 ==========================
 
-VERSION = "1.1"
+VERSION = "1.3.0"
 
 
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        ctk.set_appearance_mode("System")
+        config = load_config()
+        ctk.set_appearance_mode(config["appearance_mode"])
         ctk.set_default_color_theme("blue")
 
-        self.title(f"File Chunker v{VERSION}")
-        self.geometry("780x820")
+        self.title(f"File Chunker v{VERSION} • {ctk.get_appearance_mode()}")
+        self.geometry("800x840")
         self.resizable(True, True)
 
         self.queue = queue.Queue()
@@ -201,84 +221,93 @@ class App(ctk.CTk):
         self._build_ui()
 
     def _build_ui(self):
-        pad = {"padx": 18, "pady": 9}
+        pad = {"padx": 20, "pady": 10}
 
-        # Header / version
-        header_frame = ctk.CTkFrame(self, fg_color="transparent")
-        header_frame.grid(row=0, column=0, columnspan=3, sticky="ew", **pad)
-        ctk.CTkLabel(header_frame, text=f"File Chunker • v{VERSION}", font=("Segoe UI", 16, "bold")).pack(pady=6)
+        # Header
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.grid(row=0, column=0, columnspan=3, sticky="ew", **pad)
+        ctk.CTkLabel(header, text=f"File Chunker v{VERSION}", font=("Segoe UI", 18, "bold")).pack(pady=6)
+
+        # Theme selector
+        theme_frame = ctk.CTkFrame(self, fg_color="transparent")
+        theme_frame.grid(row=1, column=0, columnspan=3, sticky="ew", **pad)
+        ctk.CTkLabel(theme_frame, text="Appearance:").pack(side="left", padx=(0,10))
+        self.theme_var = ctk.StringVar(value=ctk.get_appearance_mode())
+        for mode in ["System", "Light", "Dark"]:
+            ctk.CTkRadioButton(
+                theme_frame, text=mode, value=mode,
+                variable=self.theme_var, command=self.change_appearance
+            ).pack(side="left", padx=12)
 
         # Input file
-        ctk.CTkLabel(self, text="Input File:").grid(row=1, column=0, sticky="w", **pad)
-        self.input_entry = ctk.CTkEntry(self, width=540)
-        self.input_entry.grid(row=1, column=1, sticky="ew", **pad)
-        ctk.CTkButton(self, text="Browse", width=130, command=self.browse_input).grid(row=1, column=2, **pad)
+        ctk.CTkLabel(self, text="Input File:").grid(row=2, column=0, sticky="w", **pad)
+        self.input_entry = ctk.CTkEntry(self, width=560)
+        self.input_entry.grid(row=2, column=1, sticky="ew", **pad)
+        ctk.CTkButton(self, text="Browse", width=140, command=self.browse_input).grid(row=2, column=2, **pad)
 
         # Output folder
-        ctk.CTkLabel(self, text="Output Folder:").grid(row=2, column=0, sticky="w", **pad)
-        self.output_entry = ctk.CTkEntry(self, width=540)
-        self.output_entry.grid(row=2, column=1, sticky="ew", **pad)
-        ctk.CTkButton(self, text="Browse", width=130, command=self.browse_output).grid(row=2, column=2, **pad)
+        ctk.CTkLabel(self, text="Output Folder:").grid(row=3, column=0, sticky="w", **pad)
+        self.output_entry = ctk.CTkEntry(self, width=560)
+        self.output_entry.grid(row=3, column=1, sticky="ew", **pad)
+        ctk.CTkButton(self, text="Browse", width=140, command=self.browse_output).grid(row=3, column=2, **pad)
 
-        # Mode
-        ctk.CTkLabel(self, text="Split Mode:").grid(row=3, column=0, sticky="nw", **pad)
+        # Split mode
+        ctk.CTkLabel(self, text="Split Mode:").grid(row=4, column=0, sticky="nw", **pad)
         mode_frame = ctk.CTkFrame(self, fg_color="transparent")
-        mode_frame.grid(row=3, column=1, columnspan=2, sticky="w", **pad)
+        mode_frame.grid(row=4, column=1, columnspan=2, sticky="w", **pad)
 
         self.mode_var = ctk.StringVar(value="size")
-        ctk.CTkRadioButton(mode_frame, text="By size (MB/GB/etc)", variable=self.mode_var,
-                           value="size", command=self.update_mode).pack(anchor="w", pady=4)
+        ctk.CTkRadioButton(mode_frame, text="By size", variable=self.mode_var,
+                           value="size", command=self.update_mode).pack(anchor="w", pady=5)
         ctk.CTkRadioButton(mode_frame, text="By number of parts", variable=self.mode_var,
-                           value="parts", command=self.update_mode).pack(anchor="w", pady=4)
+                           value="parts", command=self.update_mode).pack(anchor="w", pady=5)
 
         # Size settings
         self.size_frame = ctk.CTkFrame(self)
-        self.size_frame.grid(row=4, column=0, columnspan=3, sticky="ew", **pad)
-        ctk.CTkLabel(self.size_frame, text="Size:").grid(row=0, column=0, padx=(0,10))
-        self.size_entry = ctk.CTkEntry(self.size_frame, width=150)
+        self.size_frame.grid(row=5, column=0, columnspan=3, sticky="ew", **pad)
+        ctk.CTkLabel(self.size_frame, text="Size:").grid(row=0, column=0, padx=(0,12))
+        self.size_entry = ctk.CTkEntry(self.size_frame, width=160)
         self.size_entry.grid(row=0, column=1, padx=8)
         self.size_entry.insert(0, "500")
-
-        self.unit_combo = ctk.CTkComboBox(self.size_frame, values=list(SizeUnit.__members__.keys()), width=150)
+        self.unit_combo = ctk.CTkComboBox(self.size_frame, values=list(SizeUnit.__members__.keys()), width=160)
         self.unit_combo.grid(row=0, column=2, padx=8)
         self.unit_combo.set("MB")
 
         # Parts settings
         self.parts_frame = ctk.CTkFrame(self)
-        ctk.CTkLabel(self.parts_frame, text="Number of parts:").grid(row=0, column=0, padx=(0,10))
-        self.parts_entry = ctk.CTkEntry(self.parts_frame, width=150)
+        ctk.CTkLabel(self.parts_frame, text="Parts:").grid(row=0, column=0, padx=(0,12))
+        self.parts_entry = ctk.CTkEntry(self.parts_frame, width=160)
         self.parts_entry.grid(row=0, column=1, padx=8)
         self.parts_entry.insert(0, "5")
 
-        # Preview label
+        # Preview
         self.preview_label = ctk.CTkLabel(self, text="Preview: —", text_color="gray")
-        self.preview_label.grid(row=5, column=0, columnspan=3, pady=(4,12), sticky="w", padx=18)
+        self.preview_label.grid(row=6, column=0, columnspan=3, pady=8, sticky="w", padx=20)
 
         # Progress
-        self.progress_bar = ctk.CTkProgressBar(self, mode="determinate", width=700)
-        self.progress_bar.grid(row=6, column=0, columnspan=3, **pad)
+        self.progress_bar = ctk.CTkProgressBar(self, width=720)
+        self.progress_bar.grid(row=7, column=0, columnspan=3, **pad)
         self.progress_bar.set(0)
 
         # Log
-        ctk.CTkLabel(self, text="Progress / Log:").grid(row=7, column=0, sticky="nw", **pad)
-        self.log_text = ctk.CTkTextbox(self, height=240, width=700)
-        self.log_text.grid(row=8, column=0, columnspan=3, padx=18, pady=(4,18), sticky="nsew")
+        ctk.CTkLabel(self, text="Log:").grid(row=8, column=0, sticky="nw", **pad)
+        self.log_text = ctk.CTkTextbox(self, height=260, width=720)
+        self.log_text.grid(row=9, column=0, columnspan=3, padx=20, pady=(4,20), sticky="nsew")
 
         # Start button
-        self.start_btn = ctk.CTkButton(
-            self,
-            text="Start Splitting",
-            width=240,
-            height=48,
-            command=self.start_splitting
-        )
-        self.start_btn.grid(row=9, column=0, columnspan=3, pady=(16, 32))
+        self.start_btn = ctk.CTkButton(self, text="Start Splitting", width=260, height=50,
+                                       command=self.start_splitting)
+        self.start_btn.grid(row=10, column=0, columnspan=3, pady=(20, 40))
 
         self.grid_columnconfigure(1, weight=1)
         self.update_mode()
-
-        # Initial preview update
         self.update_preview()
+
+    def change_appearance(self):
+        mode = self.theme_var.get()
+        ctk.set_appearance_mode(mode)
+        self.title(f"File Chunker v{VERSION} • {mode}")
+        save_config({"appearance_mode": mode})
 
     def update_mode(self):
         if self.mode_var.get() == "size":
@@ -286,31 +315,29 @@ class App(ctk.CTk):
             self.size_frame.grid()
         else:
             self.size_frame.grid_remove()
-            self.parts_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=18, pady=9)
+            self.parts_frame.grid(row=5, column=0, columnspan=3, sticky="ew", padx=20, pady=10)
         self.update_preview()
 
     def update_preview(self):
         try:
-            path = Path(self.input_entry.get().strip())
-            if not path.is_file():
-                self.preview_label.configure(text="Preview: — (select a file first)")
+            p = Path(self.input_entry.get().strip())
+            if not p.is_file():
+                self.preview_label.configure(text="Preview: — (select file)")
                 return
 
             if self.mode_var.get() == "size":
-                value = float(self.size_entry.get())
+                val = float(self.size_entry.get())
                 unit = SizeUnit.from_string(self.unit_combo.get())
-                config = ChunkConfig(bytes_per_chunk=int(value * unit.value))
+                conf = ChunkConfig(bytes_per_chunk=int(val * unit.value))
             else:
                 parts = int(self.parts_entry.get())
-                config = ChunkConfig(number_of_chunks=parts)
+                conf = ChunkConfig(number_of_chunks=parts)
 
-            num, desc = estimate_chunks(path, config)
-            size_mb = path.stat().st_size / (1024*1024)
-            self.preview_label.configure(
-                text=f"Preview: ~{num} chunks  |  Original: {size_mb:.1f} MB  |  {desc}"
-            )
-        except:
-            self.preview_label.configure(text="Preview: — (invalid input)")
+            num, desc = estimate_chunks(p, conf)
+            size_mb = p.stat().st_size / (1024*1024)
+            self.preview_label.configure(text=f"≈ {num} chunks  •  {size_mb:.1f} MB total  •  {desc}")
+        except Exception:
+            self.preview_label.configure(text="Preview: — (invalid settings)")
 
     def browse_input(self):
         path = filedialog.askopenfilename()
@@ -325,16 +352,16 @@ class App(ctk.CTk):
             self.output_entry.delete(0, "end")
             self.output_entry.insert(0, path)
 
-    def log(self, message: str):
-        self.log_text.insert("end", message + "\n")
+    def log(self, msg: str):
+        self.log_text.insert("end", msg + "\n")
         self.log_text.see("end")
 
     def process_queue(self):
         try:
             while True:
-                current, total, msg = self.queue.get_nowait()
-                if total > 0:
-                    self.progress_bar.set(current / total)
+                cur, tot, msg = self.queue.get_nowait()
+                if tot > 0:
+                    self.progress_bar.set(cur / tot)
                 if msg:
                     self.log(msg)
         except queue.Empty:
@@ -346,46 +373,45 @@ class App(ctk.CTk):
 
     def split_task(self):
         try:
-            input_path = Path(self.input_entry.get().strip())
-            if not input_path.is_file():
+            inp = Path(self.input_entry.get().strip())
+            if not inp.is_file():
                 raise ValueError("Input file not found or invalid")
 
-            output_dir = Path(self.output_entry.get().strip())
-            if not output_dir:
-                raise ValueError("Please select an output directory")
+            out = Path(self.output_entry.get().strip())
+            if not out:
+                raise ValueError("Output directory required")
 
             mode = self.mode_var.get()
 
             if mode == "size":
-                value = float(self.size_entry.get())
+                val = float(self.size_entry.get())
                 unit = SizeUnit.from_string(self.unit_combo.get())
-                config = ChunkConfig(bytes_per_chunk=int(value * unit.value))
+                config = ChunkConfig(bytes_per_chunk=int(val * unit.value))
             else:
                 parts = int(self.parts_entry.get())
                 if parts < 1:
-                    raise ValueError("Number of parts must be at least 1")
+                    raise ValueError("Parts must be ≥ 1")
                 config = ChunkConfig(number_of_chunks=parts)
 
-            self.log(f"Starting: {input_path.name}")
+            self.log(f"→ Starting: {inp.name}")
             self.log(f"Mode: {mode}")
             self.progress_bar.set(0)
-            self.log_text.configure(state="normal")
 
-            chunker = get_chunker_for_file(input_path, config)
+            chunker = get_chunker_for_file(inp, config)
 
-            def progress(current: int, total: int, msg: str = ""):
-                self.queue.put((current, total, msg))
+            def progress(cur: int, tot: int, msg: str = ""):
+                self.queue.put((cur, tot, msg))
 
-            chunks = chunker.split(input_path, output_dir, progress)
+            chunks = chunker.split(inp, out, progress)
 
             self.queue.put((1, 1, "\n" + "═" * 70))
-            self.queue.put((1, 1, f"Successfully created {len(chunks)} chunks"))
-            for chunk in chunks:
-                size_mb = chunk.stat().st_size / (1024 * 1024)
-                self.queue.put((1, 1, f"  • {chunk.name:<60} ({size_mb:6.2f} MB)"))
+            self.queue.put((1, 1, f"Done — Created {len(chunks)} chunk(s)"))
+            for c in chunks:
+                mb = c.stat().st_size / (1024*1024)
+                self.queue.put((1, 1, f"  • {c.name:<60} ({mb:6.2f} MB)"))
             self.queue.put((1, 1, "═" * 70))
 
-            messagebox.showinfo("Success", f"Completed!\nCreated {len(chunks)} chunks.")
+            messagebox.showinfo("Success", f"Completed\nCreated {len(chunks)} chunks")
 
         except Exception as e:
             messagebox.showerror("Error", str(e))

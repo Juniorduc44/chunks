@@ -2,18 +2,27 @@
 File Chunker with CustomTkinter GUI
 Supports size-based and number-of-parts splitting
 """
+"""
+File Chunker with CustomTkinter GUI
+...
+"""
 
-from __future__ import annotations
-
+# Standard library
 import os
 import queue
 import threading
+import sys
 from pathlib import Path
 from typing import List, Optional
+from enum import Enum
+from dataclasses import dataclass
+from abc import ABC, abstractmethod          # ← ADD THIS LINE
 
+# GUI & dialogs
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 
+# PDF support
 import PyPDF2
 
 
